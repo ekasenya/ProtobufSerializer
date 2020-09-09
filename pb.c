@@ -60,12 +60,36 @@ void example() {
 // Return number of written bytes as Python integer
 static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     const char* path;
-    PyObject* o;
+    PyObject* list;
 
-    if (!PyArg_ParseTuple(args, "Os", &o, &path))
+    if (!PyArg_ParseTuple(args, "Os", &list, &path))
         return NULL;
 
+    printf("********************************************\n");
     printf("Write to: %s\n", path);
+
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    char *key_string = 0;
+
+    int size = PyList_Size(list);
+    printf("size=%d\n", size);
+
+
+    for (int i = 0; i < size; i++)
+    {
+        PyObject *dict = PyList_GetItem(list, i);
+
+        while (PyDict_Next(dict, &pos, &key, &value)) {
+            printf("get dict item\n");
+            key_string = PyUnicode_AsUTF8(key);
+            printf("%s\n", key_string);
+            printf("\n");
+        }
+    }
+
+    printf("********************************************\n");
+
     int bytes_written = -1;
     return PyLong_FromLong(bytes_written);
 }
