@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <zlib.h>
 #include "deviceapps.pb-c.h"
 
 #define MAGIC  0xFFFFFFFF
@@ -135,35 +136,56 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     if (!PyArg_ParseTuple(args, "Os", &list, &path))
         return NULL;
 
-    printf("********************************************\n");
-    printf("Write to: %s\n", path);
-
-    char *key_string = 0;
-
     if ( !PyList_Check(list) ) {
         printf("Input parameter is not a list\n");
-        Py_RETURN_NONE;
+        return NULL;
     }
+
+    int bytes_written = 0;
+
+    printf("********************************************\n");
+    printf("Write to: %s\n", path);
+    gzFile fp = gzopen(path,"a+");
 
     int size = PyList_Size(list);
     printf("size=%d\n", size);
 
     int i = 0;
+    void *buf;
+    unsigned len;
+
     for (i = 0; i < size; i++)
     {
-        printf("ind=%d\n", i);
-
         PyObject *dict = PyList_GetItem(list, i);
         if ( PyDict_Check(dict) ) {
             DeviceApps msg = parse_item(dict);
             printf("type=%s, id=%s, lat=%.10f, lon=%.10f\n", msg.device->type.data, msg.device->id.data, msg.lat, msg.lon);
+
+            len = device_apps__get_packed_size(&msg);
+
+            buf = malloc(len);
+            device_apps__pack(&msg, buf);
+
+            pbheader_t header = PBHEADER_INIT;
+            header.magic = MAGIC;
+            header.type = DEVICE_APPS_TYPE;
+            header.length = len;
+
+            gzwrite(fp, &header, sizeof(header));
+
+            fprintf(stderr,"Writing %d serialized bytes\n",len); // See the length of message
+            gzwrite(fp, buf, len); // Write to file
+
+            bytes_written += len;
             free(msg.apps);
+            free(buf);
         }
     }
 
+    gzclose(fp);
+
     printf("********************************************\n");
 
-    int bytes_written = -1;
     return PyLong_FromLong(bytes_written);
 }
 
