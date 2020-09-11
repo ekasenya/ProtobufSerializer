@@ -24,7 +24,6 @@ const char *APPS_KEY = "apps";
 const char *TYPE_KEY = "type";
 const char *ID_KEY = "id";
 
-
 // https://github.com/protobuf-c/protobuf-c/wiki/Examples
 void example() {
     DeviceApps msg = DEVICE_APPS__INIT;
@@ -49,6 +48,7 @@ void example() {
 
     msg.n_apps = 3;
     msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
+
     msg.apps[0] = 42;
     msg.apps[1] = 43;
     msg.apps[2] = 44;
@@ -67,10 +67,10 @@ void example() {
 
 // Parse deviceapps item of input list
 // Return DeviceApps msg
-static DeviceApps parse_item(PyObject *dict_item) {
-    DeviceApps msg = DEVICE_APPS__INIT;
+static int parse_item(PyObject *dict_item, DeviceApps *msg) {
+    //DeviceApps msg = DEVICE_APPS__INIT;
     DeviceApps__Device device = DEVICE_APPS__DEVICE__INIT;
-    msg.device = &device;
+    msg->device = &device;
 
     PyObject *device_info = PyDict_GetItemString(dict_item, DEVICE_KEY);
     if ( (device_info != NULL) && PyDict_Check(device_info) ) {
@@ -93,36 +93,40 @@ static DeviceApps parse_item(PyObject *dict_item) {
 
     PyObject *lat = PyDict_GetItemString(dict_item, LAT_KEY);
     if ( (lat != NULL) && ( PyFloat_Check(lat) || PyLong_Check(lat) ) ) {
-        msg.has_lat = 1;
-        msg.lat = PyFloat_AsDouble(lat);
+        msg->has_lat = 1;
+        msg->lat = PyFloat_AsDouble(lat);
     }
 
     PyObject *lon = PyDict_GetItemString(dict_item, LON_KEY);
     if ( (lon != NULL) && ( PyFloat_Check(lon) || PyLong_Check(lon) ) ) {
-        msg.has_lon = 1;
-        msg.lon = PyFloat_AsDouble(lon);
+        msg->has_lon = 1;
+        msg->lon = PyFloat_AsDouble(lon);
     }
 
     PyObject *apps = PyDict_GetItemString(dict_item, APPS_KEY);
     if ( PyList_Check(apps) ) {
         int size = PyList_Size(apps);
 
-        msg.n_apps = size;
-        msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
+        msg->n_apps = size;
+        msg->apps = malloc(sizeof(uint32_t) * msg->n_apps);
+
+        if (msg->apps == NULL) {
+            return 1;
+        }
 
         int i = 0;
         for (i = 0; i < size; i++)
         {
             PyObject *app = PyList_GetItem(apps, i);
             if ( PyLong_Check(app) ) {
-                msg.apps[i] = PyLong_AsUnsignedLong(app);
+                msg->apps[i] = PyLong_AsUnsignedLong(app);
             } else {
-                msg.apps[i] = 0;
+                msg->apps[i] = 0;
             }
         }
     }
 
-    return msg;
+    return 0;
 }
 
 
@@ -137,7 +141,7 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         return NULL;
 
     if ( !PyList_Check(list) ) {
-        printf("Input parameter is not a list\n");
+        PyErr_SetString(PyExc_TypeError, "Input parameter is not a list");
         return NULL;
     }
 
@@ -145,10 +149,14 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
 
     printf("********************************************\n");
     printf("Write to: %s\n", path);
-    gzFile fp = gzopen(path,"a+");
+
+    gzFile fp = gzopen(path,"w");
+    if (!fp) {
+        PyErr_Format(PyExc_OSError, "Can not create or open file1 %s", path);
+        return NULL;
+    }
 
     int size = PyList_Size(list);
-    printf("size=%d\n", size);
 
     int i = 0;
     void *buf;
@@ -158,12 +166,30 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     {
         PyObject *dict = PyList_GetItem(list, i);
         if ( PyDict_Check(dict) ) {
-            DeviceApps msg = parse_item(dict);
-            printf("type=%s, id=%s, lat=%.10f, lon=%.10f\n", msg.device->type.data, msg.device->id.data, msg.lat, msg.lon);
+            DeviceApps msg = DEVICE_APPS__INIT;
+            int res = parse_item(dict, &msg);
+            if (res > 0) {
+                switch(res){
+                    case 1:
+                        PyErr_SetString(PyExc_MemoryError, "Can not allocate memory");
+                        break;
+                    default:
+                        PyErr_SetString(PyExc_Exception, "Unknown error while parsing device item");
+                }
+                return NULL;
+            }
 
             len = device_apps__get_packed_size(&msg);
 
             buf = malloc(len);
+
+            if (buf == NULL) {
+                gzclose(fp);
+
+                PyErr_SetString(PyExc_MemoryError, "Can not allocate memory");
+                return NULL;
+            }
+
             device_apps__pack(&msg, buf);
 
             pbheader_t header = PBHEADER_INIT;

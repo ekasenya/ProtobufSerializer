@@ -11,6 +11,7 @@ yum install -y  gcc \
 
 dnf --enablerepo=PowerTools install protobuf-c-compiler \
 				protobuf-c-devel \
+				zlib-devel
 
 ulimit -c unlimited
 cd /tmp/otus/

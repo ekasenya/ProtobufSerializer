@@ -1,10 +1,11 @@
 import os
 import unittest
+import gzip
 
 import pb
 MAGIC = 0xFFFFFFFF
 DEVICE_APPS_TYPE = 1
-TEST_FILE = "test.pb.gz"
+TEST_FILE = "/tmp/otus/test.pb.gz"
 
 
 class TestPB(unittest.TestCase):
@@ -24,9 +25,18 @@ class TestPB(unittest.TestCase):
         bytes_written = pb.deviceapps_xwrite_pb(self.deviceapps, TEST_FILE)
         print(bytes_written)
         self.assertTrue(bytes_written > 0)
+        with gzip.open(TEST_FILE, mode='rb') as f:
+            record_magic = int.from_bytes(f.read(4), byteorder="little")
+            self.assertEqual(MAGIC, record_magic)
+            record_device_apps_type = int.from_bytes(f.read(2), byteorder="little")
+            self.assertEqual(DEVICE_APPS_TYPE, record_device_apps_type)
+            msg_len = int.from_bytes(f.read(2), byteorder="little")
+
+            self.assertTrue(msg_len > 0)
+
         # check magic, type, etc.
 
-    def test_read(self):
-        pb.deviceapps_xwrite_pb(self.deviceapps, TEST_FILE)
-        for i, d in enumerate(pb.deviceapps_xread_pb(TEST_FILE)):
-            self.assertEqual(d, self.deviceapps[i])
+#    def test_read(self):
+#        pb.deviceapps_xwrite_pb(self.deviceapps, TEST_FILE)
+#        for i, d in enumerate(pb.deviceapps_xread_pb(TEST_FILE)):
+#            self.assertEqual(d, self.deviceapps[i])
