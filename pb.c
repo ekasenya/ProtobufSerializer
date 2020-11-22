@@ -73,9 +73,9 @@ static int parse_item(PyObject *dict_item, DeviceApps *msg) {
     msg->device = &device;
 
     PyObject *device_info = PyDict_GetItemString(dict_item, DEVICE_KEY);
-    if ( (device_info != NULL) && PyDict_Check(device_info) ) {
+    if ( PyDict_Check(device_info) ) {
         PyObject *type = PyDict_GetItemString(device_info, TYPE_KEY);
-        if ( (type != NULL) && PyMapping_Check(type) ) {
+        if ( PyMapping_Check(type) ) {
             char *device_type = PyUnicode_AsUTF8(type);
             device.has_type = 1;
             device.type.data = (uint8_t*)device_type;
@@ -83,7 +83,7 @@ static int parse_item(PyObject *dict_item, DeviceApps *msg) {
         }
 
         PyObject *id = PyDict_GetItemString(device_info, ID_KEY);
-        if ( (id != NULL) && PyMapping_Check(id)) {
+        if ( PyMapping_Check(id) ) {
             char *device_id = PyUnicode_AsUTF8(id);
             device.has_id = 1;
             device.id.data = (uint8_t*)device_id;
@@ -92,13 +92,13 @@ static int parse_item(PyObject *dict_item, DeviceApps *msg) {
     }
 
     PyObject *lat = PyDict_GetItemString(dict_item, LAT_KEY);
-    if ( (lat != NULL) && ( PyFloat_Check(lat) || PyLong_Check(lat) ) ) {
+    if ( ( PyFloat_Check(lat) || PyLong_Check(lat) ) ) {
         msg->has_lat = 1;
         msg->lat = PyFloat_AsDouble(lat);
     }
 
     PyObject *lon = PyDict_GetItemString(dict_item, LON_KEY);
-    if ( (lon != NULL) && ( PyFloat_Check(lon) || PyLong_Check(lon) ) ) {
+    if ( ( PyFloat_Check(lon) || PyLong_Check(lon) ) ) {
         msg->has_lon = 1;
         msg->lon = PyFloat_AsDouble(lon);
     }
@@ -168,14 +168,8 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         if ( PyDict_Check(dict) ) {
             DeviceApps msg = DEVICE_APPS__INIT;
             int res = parse_item(dict, &msg);
-            if (res > 0) {
-                switch(res){
-                    case 1:
-                        PyErr_SetString(PyExc_MemoryError, "Can not allocate memory");
-                        break;
-                    default:
-                        PyErr_SetString(PyExc_Exception, "Unknown error while parsing device item");
-                }
+            if (res == 1) {
+                PyErr_SetString(PyExc_MemoryError, "Can not allocate memory");
                 return NULL;
             }
 
@@ -185,6 +179,7 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
 
             if (buf == NULL) {
                 gzclose(fp);
+                free(msg.apps);
 
                 PyErr_SetString(PyExc_MemoryError, "Can not allocate memory");
                 return NULL;
@@ -215,6 +210,128 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     return PyLong_FromLong(bytes_written);
 }
 
+typedef struct {
+    PyObject_HEAD
+    Py_ssize_t seq_index, enum_index;
+    PyObject *sequence;
+} DeviceAppGenState;
+
+static PyObject* devappgen_new(PyTypeObject *type, PyObject *args, PyObject *kwargs);
+static void devappgen_dealloc(DeviceAppGenState *dastate);
+static PyObject* devappgen_next(DeviceAppGenState *dastate);
+
+static PyTypeObject PyDeviceAppGen_Type = {
+    PyVarObject_HEAD_INIT(&PyType_Type, 0)
+    "devappgen",                    /* tp_name */
+    sizeof(DeviceAppGenState),      /* tp_basicsize */
+    0,                              /* tp_itemsize */
+    (destructor)devappgen_dealloc,  /* tp_dealloc */
+    0,                              /* tp_print */
+    0,                              /* tp_getattr */
+    0,                              /* tp_setattr */
+    0,                              /* tp_reserved */
+    0,                              /* tp_repr */
+    0,                              /* tp_as_number */
+    0,                              /* tp_as_sequence */
+    0,                              /* tp_as_mapping */
+    0,                              /* tp_hash */
+    0,                              /* tp_call */
+    0,                              /* tp_str */
+    0,                              /* tp_getattro */
+    0,                              /* tp_setattro */
+    0,                              /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,             /* tp_flags */
+    0,                              /* tp_doc */
+    0,                              /* tp_traverse */
+    0,                              /* tp_clear */
+    0,                              /* tp_richcompare */
+    0,                              /* tp_weaklistoffset */
+    PyObject_SelfIter,              /* tp_iter */
+    (iternextfunc)devappgen_next,   /* tp_iternext */
+    0,                              /* tp_methods */
+    0,                              /* tp_members */
+    0,                              /* tp_getset */
+    0,                              /* tp_base */
+    0,                              /* tp_dict */
+    0,                              /* tp_descr_get */
+    0,                              /* tp_descr_set */
+    0,                              /* tp_dictoffset */
+    0,                              /* tp_init */
+    PyType_GenericAlloc,            /* tp_alloc */
+    devappgen_new,                  /* tp_new */
+};
+
+
+static PyObject* devappgen_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+{
+    PyObject *sequence;
+
+    if (!PyArg_UnpackTuple(args, "devappgen", 1, 1, &sequence))
+        return NULL;
+
+    /* We expect an argument that supports the sequence protocol */
+    if (!PySequence_Check(sequence)) {
+        PyErr_SetString(PyExc_TypeError, "devappgen() expects a sequence");
+        return NULL;
+    }
+
+    Py_ssize_t len = PySequence_Length(sequence);
+    if (len == -1)
+        return NULL;
+
+    /* Create a new RevgenState and initialize its state - pointing to the last
+     * index in the sequence.
+    */
+    DeviceAppGenState *dastate = (DeviceAppGenState *)type->tp_alloc(type, 0);
+    if (!dastate)
+        return NULL;
+
+    Py_INCREF(sequence);
+    dastate->sequence = sequence;
+    dastate->seq_index = len - 1;
+    dastate->enum_index = 0;
+
+    return (PyObject *)dastate;
+}
+
+static void devappgen_dealloc(DeviceAppGenState *dastate)
+{
+    /* We need XDECREF here because when the generator is exhausted,
+     * rgstate->sequence is cleared with Py_CLEAR which sets it to NULL.
+    */
+    Py_XDECREF(dastate->sequence);
+    Py_TYPE(dastate)->tp_free(dastate);
+}
+
+static PyObject* devappgen_next(DeviceAppGenState *dastate)
+{
+    /* seq_index < 0 means that the generator is exhausted.
+     * Returning NULL in this case is enough. The next() builtin will raise the
+     * StopIteration error for us.
+    */
+    if (dastate->seq_index >= 0) {
+        PyObject *elem = PySequence_GetItem(dastate->sequence,
+                                            dastate->seq_index);
+        /* Exceptions from PySequence_GetItem are propagated to the caller
+         * (elem will be NULL so we also return NULL).
+        */
+        if (elem) {
+            PyObject *result = Py_BuildValue("lO", dastate->enum_index, elem);
+            dastate->seq_index--;
+            dastate->enum_index++;
+            return result;
+        }
+    }
+
+    /* The reference to the sequence is cleared in the first generator call
+     * after its exhaustion (after the call that returned the last element).
+     * Py_CLEAR will be harmless for subsequent calls since it's idempotent
+     * on NULL.
+    */
+    dastate->seq_index = -1;
+    Py_CLEAR(dastate->sequence);
+    return NULL;
+}
 
 // Unpack only messages with type == DEVICE_APPS_TYPE
 // Return iterator of Python dicts
@@ -244,5 +361,10 @@ static struct PyModuleDef pbmodule = {
 };
 
 PyMODINIT_FUNC PyInit_pb(void) {
-     (void) PyModule_Create(&pbmodule);
+    PyObject *m = PyModule_Create(&pbmodule);
+
+    PyDeviceAppGen_Type.tp_new = PyType_GenericNew;
+    if (PyType_Ready(&PyDeviceAppGen_Type) < 0)  return;
+    //Py_INCREF(&PyDeviceAppGen_Type);
+    //PyModule_AddObject(m, "iter", (PyObject *)&PyDeviceAppGen_Type);
 }
